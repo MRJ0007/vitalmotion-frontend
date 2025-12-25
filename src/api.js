@@ -1,12 +1,16 @@
 import axios from "axios";
 
 /**
- * BASE_URL Logic (Fixed for Imagine Cup Demo):
- * 1. It first looks for VITE_API_URL (which you set in Vercel Settings).
- * 2. If that's missing, it defaults to your live Render backend.
- * 3. In local development, if VITE_API_URL isn't set, it falls back to localhost.
+ * SMART BASE_URL LOGIC FOR VITALMOTION
+ * 1. Priority: Vercel Environment Variable (VITE_API_URL)
+ * 2. Fallback: Direct Render URL (Hardcoded to ensure it never fails)
  */
 const BASE_URL = import.meta.env.VITE_API_URL || "https://vitalmotion-api.onrender.com";
+
+// Defensive check to alert you in the console if something is wrong
+if (!BASE_URL) {
+    console.error("❌ API BASE URL is not configured. Check Vercel Settings.");
+}
 
 export const api = axios.create({
     baseURL: BASE_URL,
@@ -15,38 +19,44 @@ export const api = axios.create({
     },
 });
 
-// REQUEST INTERCEPTOR: Automatically adds the JWT token
+// ==============================
+// REQUEST INTERCEPTOR (JWT Handling)
+// ==============================
 api.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem("token");
         if (token && token !== "null") {
-            // Remove quotes if the token was stored as a JSON string
-            const cleanToken = token.replace(/"/g, '');
+            // Cleans token of extra quotes if stored via JSON.stringify
+            const cleanToken = token.replace(/"/g, "");
             config.headers.Authorization = `Bearer ${cleanToken}`;
         }
         return config;
     },
     (error) => {
-        console.error("API Request Error:", error);
+        console.error("Request Interceptor Error:", error);
         return Promise.reject(error);
     }
 );
 
-// RESPONSE INTERCEPTOR: Handles session expiry (401)
+// ==============================
+// RESPONSE INTERCEPTOR (Error Handling)
+// ==============================
 api.interceptors.response.use(
     (response) => response,
     (error) => {
-        // If the backend returns 401, the user is logged out
-        if (error.response && error.response.status === 401) {
+        // Handle Session Expiry (401 Unauthorized)
+        if (error.response?.status === 401) {
             localStorage.clear();
+            // Redirect to login if not already there
             if (!window.location.pathname.includes("/auth")) {
                 window.location.href = "/user/auth";
             }
         }
 
-        // Log network errors specifically for debugging during your demo
-        if (error.code === 'ERR_NETWORK') {
-            console.error("Network Error: Check if your Render backend is 'asleep' or if CORS is configured.");
+        // Handle Connection/Network Errors
+        if (error.code === "ERR_NETWORK") {
+            console.error("❌ Network Error → Cannot reach backend at:", BASE_URL);
+            console.warn("Hint: Ensure Render backend is not sleeping and CORS includes this domain.");
         }
 
         return Promise.reject(error);
