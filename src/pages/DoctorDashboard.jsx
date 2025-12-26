@@ -36,30 +36,35 @@ export default function DoctorDashboard() {
                 setLatest(live.data);
                 setAlerts(Array.isArray(alertRes.data) ? alertRes.data : alertRes.data ? [alertRes.data] : []);
                 setError("");
-            } catch {
+            } catch (err) {
+                // Fix: Using 'err' here satisfies (no-unused-vars)
+                console.error("Fetch failure:", err);
                 setError("SYSTEM FAILURE: PATIENT TELEMETRY OFFLINE");
                 setAlerts([]);
             }
         }
-        fetchPatientData();
-        const t = setInterval(fetchPatientData, 5000);
+        // Fix: 'void' tells the IDE we are intentionally not awaiting the promise
+        void fetchPatientData();
+        const t = setInterval(() => { void fetchPatientData(); }, 5000);
         return () => clearInterval(t);
-    }, []);
+    }, [activePatientId]);
 
     /* ---------------- AI DIAGNOSTIC ---------------- */
     async function runDiagnosticAI() {
         if (!latest) return;
         try {
             setLoadingAI(true);
-            const payload = {
+            const dataPayload = {
                 device_id: activePatientId,
                 heart_rate: Number(latest.heart_rate),
                 spo2: Number(latest.spo2),
                 temperature: Number(latest.temperature),
             };
-            const res = await api.post("/ai/analyze", payload);
+            const res = await api.post("/ai/analyze", dataPayload);
+            // Fix: Optional chaining for ai_insight
             setClinicalInsight(res.data?.ai_insight || "Clinical assessment generated.");
-        } catch {
+        } catch (err) {
+            console.error("AI failure:", err);
             setClinicalInsight("Diagnostic engine unavailable. Review telemetry manually.");
         } finally {
             setLoadingAI(false);
@@ -68,9 +73,17 @@ export default function DoctorDashboard() {
 
     /* ---------------- VISION SCAN (Synced Logic) ---------------- */
     async function runVisionScan() {
-        if (!visionFile) return setVisionError("Please select an image file");
+        if (!visionFile) {
+            setVisionError("Please select an image file");
+            return;
+        }
+
         const formData = new FormData();
-        formData.append("file", visionFile);
+
+        // Fix: Explicit check ensures visionFile is not null for the type checker
+        if (visionFile) {
+            formData.append("file", visionFile);
+        }
 
         try {
             setVisionLoading(true);
@@ -79,9 +92,10 @@ export default function DoctorDashboard() {
                 headers: { "Content-Type": "multipart/form-data" }
             });
 
-            // Logic synced to User Dashboard structure
-            setVisionResult(res.data.analysis || res.data.data);
+            // Fix: Optional chaining for analysis/data
+            setVisionResult(res.data?.analysis || res.data?.data);
         } catch (err) {
+            console.error("Vision failure:", err);
             setVisionError("Vision scan failed");
         } finally {
             setVisionLoading(false);
@@ -90,7 +104,6 @@ export default function DoctorDashboard() {
 
     return (
         <div style={styles.page}>
-            {/* TOP NAVIGATION RAIL */}
             <nav style={styles.navRail}>
                 <div style={styles.logoGroup}>
                     <div style={styles.pulseDot} />
@@ -106,21 +119,16 @@ export default function DoctorDashboard() {
                 </div>
             </nav>
 
-            {/* TELEMETRY BANNER */}
             <section style={styles.telemetryGrid}>
-                <MetricCard label="PATIENT HEART RATE" value={latest?.heart_rate} unit="BPM" color="#ff4d4d" icon="♥" />
-                <MetricCard label="PATIENT SpO2" value={latest?.spo2} unit="%" color="#00d1ff" icon="O₂" />
-                <MetricCard label="PATIENT TEMP" value={latest?.temperature} unit="°C" color="#ffb800" icon="🌡" />
+                <MetricCard label="PATIENT HEART RATE" value={latest?.heart_rate} unit="BPM" color="#ff4d4d" icon="♥" trend="LIVE" />
+                <MetricCard label="PATIENT SpO2" value={latest?.spo2} unit="%" color="#00d1ff" icon="O₂" trend="LIVE" />
+                <MetricCard label="PATIENT TEMP" value={latest?.temperature} unit="°C" color="#ffb800" icon="🌡" trend="LIVE" />
             </section>
 
             {error && <div style={styles.systemAlert}>{error}</div>}
 
-            {/* MAIN WORKSPACE */}
             <main style={styles.workspace}>
-                {/* LEFT: CLINICAL TOOLS */}
                 <div style={styles.leftPanel}>
-
-                    {/* VISION SCANNER */}
                     <div style={styles.actionCard}>
                         <div style={styles.cardHeader}>
                             <h3 style={styles.cardTitle}>CLINICAL DOCUMENT ANALYSIS</h3>
@@ -131,7 +139,7 @@ export default function DoctorDashboard() {
                                 type="file"
                                 id="file-input"
                                 style={{ display: 'none' }}
-                                onChange={(e) => setVisionFile(e.target.files[0])}
+                                onChange={(e) => setVisionFile(e.target.files ? e.target.files[0] : null)}
                             />
                             <label htmlFor="file-input" style={styles.fileButton}>
                                 {visionFile ? visionFile.name : "📁 ATTACH LAB REPORT / SCAN"}
@@ -145,11 +153,14 @@ export default function DoctorDashboard() {
                             </button>
                         </div>
 
+                        {/* Fix: Rendering visionError satisfies (no-unused-vars) */}
+                        {visionError && <p style={{ color: '#ef4444', fontSize: '12px', marginTop: '10px' }}>{visionError}</p>}
+
                         {visionResult && (
                             <div style={styles.resultBox}>
-                                <p style={styles.resultText}>{visionResult.extracted_note}</p>
+                                <p style={styles.resultText}>{visionResult?.extracted_note || "No notes extracted"}</p>
                                 <div style={styles.tagWrap}>
-                                    {visionResult.tags?.map((t, i) => (
+                                    {visionResult?.tags?.map((t, i) => (
                                         <span key={i} style={styles.tag}>{t}</span>
                                     ))}
                                 </div>
@@ -157,7 +168,6 @@ export default function DoctorDashboard() {
                         )}
                     </div>
 
-                    {/* AI DIAGNOSTIC SUMMARY */}
                     <div style={styles.actionCard}>
                         <div style={styles.cardHeader}>
                             <h3 style={styles.cardTitle}>DIAGNOSTIC SUMMARY</h3>
@@ -171,7 +181,6 @@ export default function DoctorDashboard() {
                     </div>
                 </div>
 
-                {/* RIGHT: ALERTS & COMMUNICATION */}
                 <div style={styles.rightPanel}>
                     <div style={styles.monitorCard}>
                         <h4 style={styles.monitorTitle}>CRITICAL PATIENT ALERTS</h4>
@@ -197,9 +206,7 @@ export default function DoctorDashboard() {
     );
 }
 
-/* ---------------- UI COMPONENTS ---------------- */
-
-function MetricCard({ label, value, unit, color, icon }) {
+function MetricCard({ label, value, unit, color, icon, trend }) {
     return (
         <div style={styles.metricCard}>
             <div style={styles.metricHeader}>
@@ -210,30 +217,21 @@ function MetricCard({ label, value, unit, color, icon }) {
                 <span style={{ ...styles.metricValue, color }}>{value || "--"}</span>
                 <span style={styles.metricUnit}>{unit}</span>
             </div>
+            <div style={{ fontSize: '10px', color: '#4ade80', marginTop: '10px', fontWeight: 'bold' }}>{trend}</div>
         </div>
     );
 }
 
-/* ---------------- STYLES ---------------- */
-
 const styles = {
-    page: {
-        minHeight: "100vh", background: "#020617", color: "#f1f5f9",
-        padding: "0 40px 40px 40px", fontFamily: "'Inter', sans-serif"
-    },
-    navRail: {
-        height: "80px", display: "flex", justifyContent: "space-between",
-        alignItems: "center", borderBottom: "1px solid #1e293b", marginBottom: "30px"
-    },
+    page: { minHeight: "100vh", background: "#020617", color: "#f1f5f9", padding: "0 40px 40px 40px", fontFamily: "'Inter', sans-serif" },
+    navRail: { height: "80px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e293b", marginBottom: "30px" },
     logoGroup: { display: "flex", alignItems: "center", gap: "12px" },
     pulseDot: { width: "10px", height: "10px", borderRadius: "50%", background: "#ef4444", boxShadow: "0 0 12px #ef4444" },
     logoText: { fontSize: "18px", fontWeight: "900", letterSpacing: "1px", margin: 0 },
     versionTag: { fontSize: "10px", color: "#64748b", fontWeight: "700" },
-
     navLinks: { display: "flex", alignItems: "center", gap: "20px" },
     aboutLink: { fontSize: "12px", fontWeight: "700", color: "#3b82f6", textDecoration: "none" },
     divider: { width: "1px", height: "20px", background: "#334155" },
-
     telemetryGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "20px", marginBottom: "30px" },
     metricCard: { background: "#0f172a", padding: "24px", borderRadius: "16px", border: "1px solid #1e293b" },
     metricHeader: { display: "flex", justifyContent: "space-between", marginBottom: "8px" },
@@ -241,30 +239,23 @@ const styles = {
     metricBody: { display: "flex", alignItems: "baseline", gap: "8px" },
     metricValue: { fontSize: "32px", fontWeight: "800" },
     metricUnit: { fontSize: "14px", color: "#475569" },
-
     systemAlert: { background: "rgba(239, 68, 68, 0.1)", border: "1px solid #ef4444", color: "#ef4444", padding: "12px", borderRadius: "8px", marginBottom: "20px", fontSize: "12px", textAlign: "center", fontWeight: "700" },
-
     workspace: { display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: "30px" },
     leftPanel: { display: "flex", flexDirection: "column", gap: "30px" },
     rightPanel: { display: "flex", flexDirection: "column", gap: "30px" },
-
     actionCard: { background: "#0f172a", borderRadius: "20px", padding: "24px", border: "1px solid #1e293b" },
     cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" },
     cardTitle: { fontSize: "14px", fontWeight: "800", color: "#94a3b8" },
     statusBadge: { fontSize: "9px", background: "rgba(59, 130, 246, 0.1)", color: "#3b82f6", padding: "4px 8px", borderRadius: "4px", fontWeight: "900" },
-
     uploadZone: { display: "flex", gap: "12px" },
     fileButton: { flex: 1, background: "#1e293b", padding: "12px", borderRadius: "12px", fontSize: "12px", textAlign: "center", cursor: "pointer", border: "1px dashed #334155" },
     scanButton: { background: "#3b82f6", color: "white", border: "none", padding: "0 24px", borderRadius: "12px", fontWeight: "700", cursor: "pointer" },
-
     resultBox: { marginTop: "20px", padding: "15px", background: "#020617", borderRadius: "12px" },
     resultText: { fontSize: "14px", lineHeight: "1.6", color: "#cbd5e1" },
     tagWrap: { display: "flex", gap: "8px", marginTop: "12px" },
     tag: { background: "#1e3a8a", color: "#60a5fa", padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: "600" },
-
     aiTextBox: { fontSize: "15px", lineHeight: "1.6", color: "#cbd5e1", background: "rgba(30, 41, 59, 0.5)", padding: "20px", borderRadius: "12px" },
     refreshBtn: { background: "transparent", color: "#3b82f6", border: "1px solid #3b82f6", padding: "6px 14px", borderRadius: "8px", fontSize: "11px", fontWeight: "700", cursor: "pointer" },
-
     monitorCard: { background: "#0f172a", borderRadius: "20px", padding: "24px", border: "1px solid #1e293b" },
     monitorTitle: { fontSize: "12px", fontWeight: "800", color: "#64748b", marginBottom: "15px" },
     alertList: { display: "flex", flexDirection: "column", gap: "10px" },
