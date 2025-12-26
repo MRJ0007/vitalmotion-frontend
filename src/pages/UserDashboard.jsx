@@ -3,11 +3,15 @@ import { api } from "../api";
 import LogoutButton from "../components/LogoutButton";
 import { getToken } from "../auth/authStorage";
 import ChatBox from "../components/ChatBox";
-import ClinicalScanner from "../components/ClinicalScanner";
 import { Link } from "react-router-dom";
 
+/* ---------------- JWT Helper ---------------- */
 function parseJwt(token) {
-    try { return JSON.parse(atob(token.split(".")[1])); } catch { return null; }
+    try {
+        return JSON.parse(atob(token.split(".")[1]));
+    } catch {
+        return null;
+    }
 }
 
 export default function UserDashboard() {
@@ -16,6 +20,11 @@ export default function UserDashboard() {
     const [aiText, setAiText] = useState("");
     const [loadingAI, setLoadingAI] = useState(false);
     const [error, setError] = useState("");
+
+    const [visionFile, setVisionFile] = useState(null);
+    const [visionResult, setVisionResult] = useState(null);
+    const [visionLoading, setVisionLoading] = useState(false);
+    const [visionError, setVisionError] = useState("");
 
     const token = getToken();
     const payload = parseJwt(token);
@@ -27,10 +36,11 @@ export default function UserDashboard() {
                 const live = await api.get(`/sensor/live/${deviceId}`);
                 const alertRes = await api.get(`/alerts/latest/${deviceId}`);
                 setLatest(live.data);
-                setAlerts(alertRes.data || []);
+                setAlerts(Array.isArray(alertRes.data) ? alertRes.data : alertRes.data ? [alertRes.data] : []);
                 setError("");
             } catch {
-                setError("OFFLINE: UNABLE TO SYNC WEARABLE");
+                setError("SYSTEM OFFLINE");
+                setAlerts([]);
             }
         }
         fetchData();
@@ -43,146 +53,213 @@ export default function UserDashboard() {
         try {
             setLoadingAI(true);
             const res = await api.post("/ai/analyze", {
-                heart_rate: latest.heart_rate,
-                spo2: latest.spo2,
-                temperature: latest.temperature,
+                device_id: deviceId,
+                heart_rate: Number(latest.heart_rate),
+                spo2: Number(latest.spo2),
+                temperature: Number(latest.temperature),
             });
-            setAiText(res.data.ai_insight || res.data.summary || "");
+            setAiText(res.data.ai_insight);
         } catch {
-            setAiText("AI Guide is recalibrating. Please retry shortly.");
+            setAiText("AI Calibration required.");
         } finally {
             setLoadingAI(false);
         }
     }
 
+    async function runVisionScan() {
+        if (!visionFile) return;
+        const formData = new FormData();
+        formData.append("file", visionFile);
+        try {
+            setVisionLoading(true);
+            const res = await api.post("/vision/analyze-live", formData, {
+                headers: { "Content-Type": "multipart/form-data" }
+            });
+            setVisionResult(res.data.analysis);
+        } catch {
+            setVisionError("Scan failed.");
+        } finally {
+            setVisionLoading(false);
+        }
+    }
+
     return (
         <div style={styles.page}>
-            <div style={styles.header}>
-                <div>
-                    <h2 style={styles.greeting}>WELCOME BACK! 👋</h2>
-                    <p style={styles.subText}>REAL-TIME HEALTH INTELLIGENCE</p>
+            {/* 1. TOP NAVIGATION RAIL */}
+            <nav style={styles.navRail}>
+                <div style={styles.logoGroup}>
+                    <div style={styles.pulseDot} />
+                    <h1 style={styles.logoText}>VITALMOTION</h1>
+                    <span style={styles.versionTag}>v2.0.4</span>
                 </div>
-                <div style={styles.headerRight}>
-                    <Link to="/about" style={styles.aboutLink}>SYSTEM INFO</Link>
+                <div style={styles.navLinks}>
+                    <Link to="/about" style={styles.aboutLink}>ABOUT SYSTEM</Link>
+                    <div style={styles.divider} />
                     <LogoutButton />
                 </div>
-            </div>
+            </nav>
 
-            <div style={styles.statusBadgeBlue}>
-                <span style={styles.pulseBlue}></span>
-                AZURE AI VISION ACTIVE — READY FOR SCAN
-            </div>
+            {/* 2. TELEMETRY BANNER (VITALS) */}
+            <section style={styles.telemetryGrid}>
+                <MetricCard label="HEART RATE" value={latest?.heart_rate} unit="BPM" color="#ff4d4d" trend="Stable" />
+                <MetricCard label="OXYGEN (SpO2)" value={latest?.spo2} unit="%" color="#00d1ff" trend="Normal" />
+                <MetricCard label="TEMPERATURE" value={latest?.temperature} unit="°C" color="#ffb800" trend="Optimal" />
+            </section>
 
-            {error && <div style={styles.errorBox}>⚠️ {error}</div>}
+            {error && <div style={styles.systemAlert}>{error}</div>}
 
-            {latest && (
-                <div style={styles.grid}>
-                    <MetricCard label="HEART RATE" value={latest.heart_rate} unit="BPM" color="#ef4444" />
-                    <MetricCard label="BLOOD OXYGEN" value={latest.spo2} unit="%" color="#3b82f6" />
-                    <MetricCard label="BODY TEMP" value={latest.temperature} unit="°C" color="#f59e0b" />
-                </div>
-            )}
-
-            <div style={styles.mainLayout}>
-                <div style={styles.leftCol}>
-                    <div style={styles.panel}>
-                        <div style={styles.panelHeader}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <div style={styles.iconBoxBlue}>
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4">
-                                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                                    </svg>
-                                </div>
-                                <h3 style={styles.panelTitle}>PERSONAL DOCUMENT SCANNER</h3>
-                            </div>
-                            <span style={styles.tagBlue}>AI VISION</span>
+            {/* 3. INTELLIGENCE WORKSPACE */}
+            <main style={styles.workspace}>
+                {/* LEFT: ACTIVE ANALYSIS */}
+                <div style={styles.leftPanel}>
+                    {/* VISION SCANNER */}
+                    <div style={styles.actionCard}>
+                        <div style={styles.cardHeader}>
+                            <h3 style={styles.cardTitle}>VISION INTELLIGENCE</h3>
+                            <div style={styles.statusBadge}>ACTIVE</div>
                         </div>
-                        <div style={styles.panelBody}><ClinicalScanner /></div>
-                    </div>
-
-                    <div style={styles.aiPanel}>
-                        <div style={styles.aiHeader}>
-                            <h3 style={styles.panelTitle}>✨ VITALMOTION AI GUIDE</h3>
-                            <button onClick={runAI} disabled={loadingAI} style={loadingAI ? styles.btnDisabled : styles.btnActive}>
-                                {loadingAI ? "ANALYZING..." : "REFRESH INSIGHT"}
+                        <div style={styles.uploadZone}>
+                            <input
+                                type="file"
+                                id="file-input"
+                                style={{ display: 'none' }}
+                                onChange={(e) => setVisionFile(e.target.files[0])}
+                            />
+                            <label htmlFor="file-input" style={styles.fileButton}>
+                                {visionFile ? visionFile.name : "SELECT DOCUMENT"}
+                            </label>
+                            <button
+                                onClick={runVisionScan}
+                                style={styles.scanButton}
+                                disabled={visionLoading || !visionFile}
+                            >
+                                {visionLoading ? "SCANNING..." : "EXECUTE SCAN"}
                             </button>
                         </div>
-                        <div style={styles.aiBody}>
-                            {aiText ? <p style={styles.aiText}>{aiText}</p> : <div style={styles.placeholder}>Click above for your personalized AI health analysis.</div>}
+                        {visionResult && (
+                            <div style={styles.resultBox}>
+                                <p style={styles.resultText}>{visionResult.extracted_note}</p>
+                                <div style={styles.tagWrap}>
+                                    {visionResult.tags?.map((t, i) => <span key={i} style={styles.tag}>{t}</span>)}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* AI ANALYTICS */}
+                    <div style={styles.actionCard}>
+                        <div style={styles.cardHeader}>
+                            <h3 style={styles.cardTitle}>AI HEALTH ADVISOR</h3>
+                            <button onClick={runAI} style={styles.refreshBtn}>
+                                {loadingAI ? "PROCESSING..." : "REFRESH INSIGHT"}
+                            </button>
+                        </div>
+                        <div style={styles.aiTextBox}>
+                            {aiText || "Aggregating telemetry data... Click refresh for real-time analysis."}
                         </div>
                     </div>
                 </div>
 
-                <div style={styles.sidebar}>
-                    {alerts.length > 0 && (
-                        <div style={styles.alertBox}>
-                            <h4 style={{ color: '#fcd34d', margin: '0 0 15px 0', fontWeight: '900' }}>SAFETY NOTICES</h4>
-                            {alerts.map((a, i) => <div key={i} style={styles.alertItem}>{a.message}</div>)}
+                {/* RIGHT: MONITORING & CHAT */}
+                <div style={styles.rightPanel}>
+                    <div style={styles.monitorCard}>
+                        <h4 style={styles.monitorTitle}>SAFETY NOTICES</h4>
+                        <div style={styles.alertList}>
+                            {alerts.length > 0 ? (
+                                alerts.map((a, i) => <div key={i} style={styles.alertItem}>• {a.message}</div>)
+                            ) : (
+                                <div style={styles.emptyText}>Monitoring clear. No active alerts.</div>
+                            )}
                         </div>
-                    )}
-                    <div style={styles.chatWrapper}><ChatBox deviceId={deviceId} role="user" /></div>
+                    </div>
+                    <div style={styles.chatContainer}>
+                        <ChatBox deviceId={deviceId} role="user" />
+                    </div>
                 </div>
-            </div>
+            </main>
         </div>
     );
 }
 
-function MetricCard({ label, value, unit, color }) {
+/* ---------------- UI COMPONENTS ---------------- */
+
+function MetricCard({ label, value, unit, color, trend }) {
     return (
-        <div style={styles.card}>
-            <span style={styles.cardLabel}>{label}</span>
-            <div style={styles.cardValueRow}>
-                <span style={{ ...styles.cardValue, color: color }}>{value}</span>
-                <span style={styles.cardUnit}>{unit}</span>
+        <div style={styles.metricCard}>
+            <div style={styles.metricHeader}>
+                <span style={styles.metricLabel}>{label}</span>
+                <span style={{ color: '#4ade80', fontSize: '10px' }}>{trend}</span>
+            </div>
+            <div style={styles.metricBody}>
+                <span style={{ ...styles.metricValue, color }}>{value || "--"}</span>
+                <span style={styles.metricUnit}>{unit}</span>
             </div>
         </div>
     );
 }
+
+/* ---------------- ORGANIZED STYLES ---------------- */
+
 const styles = {
-    page: { minHeight: "100vh", background: "#020617", color: "#f8fafc", padding: "40px", fontFamily: "'Inter', sans-serif" },
-    header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "30px" },
-    greeting: { fontSize: "28px", fontWeight: "900", margin: 0, letterSpacing: "-0.5px" },
-    subText: { color: "#64748b", fontSize: "14px", fontWeight: "700", marginTop: "4px" },
-    headerRight: { display: "flex", gap: "25px", alignItems: "center" },
-    adminLink: { color: "#22c55e", textDecoration: "none", fontWeight: "900", fontSize: "13px" },
-    aboutLink: { color: "#3b82f6", textDecoration: "none", fontWeight: "900", fontSize: "13px" },
+    page: {
+        minHeight: "100vh",
+        background: "#020617",
+        color: "#f1f5f9",
+        padding: "0 40px 40px 40px",
+        fontFamily: "'Inter', sans-serif"
+    },
+    navRail: {
+        height: "80px",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        borderBottom: "1px solid #1e293b",
+        marginBottom: "30px"
+    },
+    logoGroup: { display: "flex", alignItems: "center", gap: "12px" },
+    pulseDot: { width: "10px", height: "10px", borderRadius: "50%", background: "#3b82f6", boxShadow: "0 0 12px #3b82f6" },
+    logoText: { fontSize: "18px", fontWeight: "900", letterSpacing: "1px", margin: 0 },
+    versionTag: { fontSize: "10px", background: "#1e293b", padding: "2px 6px", borderRadius: "4px", color: "#64748b" },
 
-    statusBadge: { padding: "14px", borderRadius: "12px", background: "rgba(34, 197, 94, 0.05)", border: "1px solid #22c55e", color: "#22c55e", fontSize: "12px", fontWeight: "900", textAlign: "center", marginBottom: "30px", display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", letterSpacing: "1px" },
-    statusBadgeBlue: { padding: "14px", borderRadius: "12px", background: "rgba(59, 130, 246, 0.05)", border: "1px solid #3b82f6", color: "#3b82f6", fontSize: "12px", fontWeight: "900", textAlign: "center", marginBottom: "30px", display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", letterSpacing: "1px" },
-    pulse: { height: "10px", width: "10px", borderRadius: "50%", background: "#22c55e", boxShadow: "0 0 12px #22c55e" },
-    pulseBlue: { height: "10px", width: "10px", borderRadius: "50%", background: "#3b82f6", boxShadow: "0 0 12px #3b82f6" },
+    navLinks: { display: "flex", alignItems: "center", gap: "20px" },
+    aboutLink: { fontSize: "12px", fontWeight: "700", color: "#3b82f6", textDecoration: "none" },
+    divider: { width: "1px", height: "20px", background: "#334155" },
 
-    grid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "25px", marginBottom: "40px" },
-    card: { background: "#0f172a", padding: "28px", borderRadius: "24px", border: "1px solid #1e293b", boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)" },
-    cardLabel: { fontSize: "11px", color: "#94a3b8", fontWeight: "800", textTransform: "uppercase", letterSpacing: "1px" },
-    cardValueRow: { display: "flex", alignItems: "baseline", gap: "8px", marginTop: "12px" },
-    cardValue: { fontSize: "42px", fontWeight: "900" },
-    cardUnit: { fontSize: "18px", color: "#475569", fontWeight: "700" },
+    telemetryGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "20px", marginBottom: "30px" },
+    metricCard: { background: "#0f172a", padding: "24px", borderRadius: "16px", border: "1px solid #1e293b" },
+    metricHeader: { display: "flex", justifyContent: "space-between", marginBottom: "8px" },
+    metricLabel: { fontSize: "10px", fontWeight: "800", color: "#64748b" },
+    metricBody: { display: "flex", alignItems: "baseline", gap: "8px" },
+    metricValue: { fontSize: "32px", fontWeight: "800" },
+    metricUnit: { fontSize: "14px", color: "#475569" },
 
-    mainLayout: { display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: "30px" },
-    leftCol: { display: "flex", flexDirection: "column", gap: "30px" },
-    panel: { background: "#0f172a", borderRadius: "24px", border: "1px solid #1e293b", overflow: "hidden" },
-    panelHeader: { padding: "20px 24px", background: "#131823", borderBottom: "1px solid #1e293b", display: "flex", justifyContent: "space-between", alignItems: "center" },
-    panelTitle: { fontSize: "15px", fontWeight: "900", margin: 0, letterSpacing: "0.5px" },
-    iconBox: { background: '#22c55e', borderRadius: '8px', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 15px rgba(34, 197, 94, 0.4)' },
-    iconBoxBlue: { background: '#3b82f6', borderRadius: '8px', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 15px rgba(59, 130, 246, 0.4)' },
-    tag: { fontSize: "10px", color: "#22c55e", background: "rgba(34, 197, 94, 0.1)", padding: "5px 10px", borderRadius: "6px", fontWeight: "900" },
-    tagBlue: { fontSize: "10px", color: "#3b82f6", background: "rgba(59, 130, 246, 0.1)", padding: "5px 10px", borderRadius: "6px", fontWeight: "900" },
-    panelBody: { padding: "24px" },
+    systemAlert: { background: "rgba(239, 68, 68, 0.1)", border: "1px solid #ef4444", color: "#ef4444", padding: "12px", borderRadius: "8px", marginBottom: "20px", fontSize: "12px", textAlign: "center", fontWeight: "700" },
 
-    aiPanel: { background: "#0f172a", borderRadius: "24px", border: "1px solid rgba(34, 197, 94, 0.2)", overflow: "hidden" },
-    aiHeader: { padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e293b", background: "rgba(34, 197, 94, 0.03)" },
-    aiBody: { padding: "28px" },
-    aiText: { fontSize: "16px", lineHeight: "1.8", color: "#cbd5e1", fontWeight: "500" },
-    placeholder: { textAlign: "center", color: "#475569", fontSize: "14px", padding: "20px", fontWeight: "600" },
+    workspace: { display: "grid", gridTemplateColumns: "1.6fr 1fr", gap: "30px" },
+    leftPanel: { display: "flex", flexDirection: "column", gap: "30px" },
+    rightPanel: { display: "flex", flexDirection: "column", gap: "30px" },
 
-    btnActive: { background: "#f8fafc", color: "#020617", border: "none", padding: "12px 24px", borderRadius: "12px", fontWeight: "900", cursor: "pointer", fontSize: "12px", transition: "0.2s" },
-    btnDisabled: { background: "#1e293b", color: "#475569", border: "none", padding: "12px 24px", borderRadius: "12px", cursor: "not-allowed", fontSize: "12px" },
+    actionCard: { background: "#0f172a", borderRadius: "20px", padding: "24px", border: "1px solid #1e293b" },
+    cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" },
+    cardTitle: { fontSize: "14px", fontWeight: "800", color: "#94a3b8" },
+    statusBadge: { fontSize: "9px", background: "rgba(59, 130, 246, 0.1)", color: "#3b82f6", padding: "4px 8px", borderRadius: "4px", fontWeight: "900" },
 
-    sidebar: { display: "flex", flexDirection: "column", gap: "30px" },
-    alertBox: { background: "rgba(251, 191, 36, 0.05)", border: "1px solid rgba(251, 191, 36, 0.2)", padding: "24px", borderRadius: "24px" },
-    alertItem: { fontSize: "14px", color: "#fbbf24", padding: "12px 0", borderBottom: "1px solid rgba(251, 191, 36, 0.1)", fontWeight: "600" },
-    chatWrapper: { flex: 1, minHeight: "550px" },
-    errorBox: { background: "rgba(239, 68, 68, 0.1)", color: "#ef4444", padding: "18px", borderRadius: "16px", textAlign: "center", fontWeight: "900", marginBottom: "30px", border: "1px solid #ef4444", fontSize: "14px" }
+    uploadZone: { display: "flex", gap: "12px" },
+    fileButton: { flex: 1, background: "#1e293b", padding: "12px", borderRadius: "12px", fontSize: "12px", textAlign: "center", cursor: "pointer", border: "1px dashed #334155" },
+    scanButton: { background: "#3b82f6", color: "white", border: "none", padding: "0 24px", borderRadius: "12px", fontWeight: "700", cursor: "pointer" },
+
+    resultBox: { marginTop: "20px", padding: "15px", background: "#020617", borderRadius: "12px" },
+    resultText: { fontSize: "14px", lineHeight: "1.6", color: "#cbd5e1" },
+    tagWrap: { display: "flex", gap: "8px", marginTop: "12px" },
+    tag: { background: "#1e3a8a", color: "#60a5fa", padding: "4px 10px", borderRadius: "6px", fontSize: "11px", fontWeight: "600" },
+
+    aiTextBox: { fontSize: "15px", lineHeight: "1.6", color: "#cbd5e1", background: "rgba(30, 41, 59, 0.5)", padding: "20px", borderRadius: "12px" },
+    refreshBtn: { background: "transparent", color: "#3b82f6", border: "1px solid #3b82f6", padding: "6px 14px", borderRadius: "8px", fontSize: "11px", fontWeight: "700", cursor: "pointer" },
+
+    monitorCard: { background: "#0f172a", borderRadius: "20px", padding: "24px", border: "1px solid #1e293b" },
+    monitorTitle: { fontSize: "12px", fontWeight: "800", color: "#64748b", marginBottom: "15px" },
+    alertList: { display: "flex", flexDirection: "column", gap: "10px" },
+    alertItem: { fontSize: "13px", color: "#fca5a5" },
+    emptyText: { fontSize: "13px", color: "#475569", fontStyle: "italic" },
+    chatContainer: { height: "400px", borderRadius: "20px", overflow: "hidden" }
 };
